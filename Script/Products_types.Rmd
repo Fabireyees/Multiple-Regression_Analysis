@@ -1,0 +1,388 @@
+---
+title: Predicting Product Sales
+author: Alex and Fabi
+date: 02/12/2019
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+## SUMMARY 
+
+The aim of the report is to estimate which of the new products are the best to add on the portfolio, based on the profit that products will bring to the company. 
+
+The volume of new product units sold it's estimated based on the historical data of the products in the current portfolio. Different models are adjusted, and the one with the best metrics is selected. Then, the profit is calculated with the product margin and the volume estimated. Two different models are adjusted, 
+
+The outliers are analyzed for the volume of sales, as is the dependent variable.  Although the outliers are not eliminated straight forward as an outlier in sales volume represents a product with high success. A model able to predict this phenomenon is also an object of the present study. Two models are adjusted, one for the outliers and another one for the rest of the points. 
+
+Random forest model has been selected to make finals predictions, and it can be concluded that potentially: Tablet, Smartphone, Pc, and Netbook are on the top5.
+
+## Data Exploration
+
+Two data sets are analyzed one with current portfolio products and a second one with the potential new products. Each data set contains the same 18 variables. 
+
+The type of products is one of the variables contained in the dataset. There are many types of products; however, four of them are analyzed (PC, LAPTOP, NETBOOK, and SMARTPHONE). Extended Warranty products have been deleted because it’s a service and not a product. It is not in the portfolio, and there is no reason for the warranty to explain the sales volumes of other products. Moreover, the only thing changing for each warranty ID is the price; the other variables have the same value, which might be a sum of all of them. 
+
+For the variable BestRankProducts, there are some NA products that are not in the top rank. The ranking might be classified by product type, and it’s a measure its not understood. Therefore, the variable is removed from the dataset.
+
+The “Product_Num” is transformed the ID for each product; therefore, it is not considered as variable to be analyzed.
+Data exploration, data pre-processing, and data evaluation have been carried out to establish, which are the most highly likely variables to be relevant for the model adjustment. 
+
+In the first part, we have been analyzed the data, take out outliers, remove duplicates, and also the variables that are not related directly with the prediction of the volume.
+In the next steps, we will focus on correlation analysis and collinearity.
+
+```{r , echo=FALSE, results='hide',fig.keep='all',message=FALSE}
+
+library("readr")
+library("ggplot2")
+library("lattice")
+library("caret")
+library("corrplot")
+library("dplyr")
+library("e1071")
+                                      
+
+pacman:: p_load(caret, party, reshape, ggplot2, dplyr)
+
+ACTUALPRODUCTS <- read.csv("C:/Respaldo FR/UBIQUM/Proyectos/Multiple-Regression_Analysis/Data_sets/PRODUCTATTRIBUTESID.csv")
+
+NEWPRODUCTS <- read.csv("C:/Respaldo FR/UBIQUM/Proyectos/Multiple-Regression_Analysis/Data_sets/NewProductsAttributesF.csv")
+
+
+
+ds1 <- data.frame(ACTUALPRODUCTS[,-2], row.names = ACTUALPRODUCTS[,2])
+
+ds1 <- data.frame(ds1[ds1$ProductType != "ExtendedWarranty",])
+
+ds1 <- data.frame(ds1[,-11])
+
+ds1 <- data.frame(ds1[,-15])
+
+ggplot(ACTUALPRODUCTS, aes( y = Volume)) +
+  geom_boxplot()
+
+OutlierDataset <- ACTUALPRODUCTS
+OutlierColumn <- ACTUALPRODUCTS$Volume
+ACTUALPRODUCTS <- OutlierDataset[OutlierColumn > (quantile(OutlierColumn)[[2]] - 1.5*IQR(OutlierColumn)),]
+ACTUALPRODUCTS <- OutlierDataset[OutlierColumn < (quantile(OutlierColumn)[[4]] + 1.5*IQR(OutlierColumn)),]
+
+
+
+
+
+
+
+```
+
+## Feature Selection
+
+For this analysis, it is necessary to remove nonnumerical features to make predictions; wich is why it is essential to manage these variables.
+After the   'Dummy Variables' analysis, we have been able to get the correlation analysis, colinearity, and finally consider the most critical variables for our predictions.
+Also, the Anova test has been taken into consideration in where we have a p-value higher than 0.5 which makes us conclude that volume and product type are not depended. It is not useful to use this variable to predict volume.
+
+A matrix correlation is calculated to analyze the relationship between the variables with the volume of sales. The variables that can potentially explain the variance of the population are x4StarReviews, x3StarReviews, x2StarReviews, x1StarReviews, PositiveServiceReview, NegativeServiceReview because have a high correlation. Price can also have help adjusting the model even though the correlation is low. It is found that there is high colinearity between x4StarReviews and x3StarReviews and with x2StarReviews and 1xStarReviews; therefore, all the variables won't be used to adjust the model due to the high risk of overfitting. 
+
+```{r , echo=FALSE, results='hide', fig.keep='all', message=FALSE}
+
+#FEATURE SELECTION####
+
+newDs1 <- dummyVars(" ~ .", data = ds1)
+
+readyDs1 <- data.frame(predict(newDs1, newdata = ds1))
+
+corMatrix <- cor(readyDs1[,-3])
+
+corrplot(corMatrix,tl.cex = 0.7, type = "lower")
+
+ds1 <- data.frame(ds1[ds1$ProductType != "ExtendedWarranty",])
+ACTUALPRODUCTS <- data.frame(ACTUALPRODUCTS[ACTUALPRODUCTS$ProductType != "ExtendedWarranty",])
+ 
+
+#corr 2
+
+ANOVA <- aov(ACTUALPRODUCTS$Volume~ ACTUALPRODUCTS$ProductType)
+summary(ANOVA)
+```
+
+## Model Adjustment 
+
+Several models are adjusted to the current portfolio dataset: linear regression, knn, random forest, linear svm, and radial and radial svm. For each model, different variables are studied. Root mean square error, mean absolute error, and R square are the metrics analyzed to determine which model is more likely to explain the variability of the population. The process is repeated for the dataset with and without the outliers.
+
+The first figure shows that the models which better perform considering the outliers is a random forest with x4StarReview, Price, and Positive reviews. The RMSE and ME are 1477.38 and 527.56, respectively, with a correlation of 0.95. The RMSE is high because of the outliers. However, the MAE is acceptable for this particular model as it's objective is to predict outliers.
+
+The results for the model are calculated and shown in the second figure, the model that better perform after having eliminated the outliers is knn with x4StarReview and PositiveStarReview. The RMSE and ME are  174.34 and 93.31, respectively with a correlation of 0.87.
+
+
+```{r , echo=FALSE, results='hide', fig.keep='all', message=FALSE}
+
+#SIN OUTLIERS
+set.seed(123)
+in_training <- createDataPartition(ds1$Volume, p=0.7, list=F)
+training <- ds1[in_training,]
+testing <- ds1[-in_training,]
+a <- c("lm","rf","knn","svmLinear","svmRadial")
+features <- c("Volume ~ x4StarReviews + PositiveServiceReview",
+              "Volume ~ x4StarReviews + NegativeServiceReview",
+              "Volume ~ x4StarReviews + x2StarReviews",
+              "Volume ~ x4StarReviews + PositiveServiceReview + NegativeServiceReview",
+              "Volume ~ x4StarReviews + PositiveServiceReview + x2StarReviews",
+              "Volume ~ x4StarReviews + Price",
+              "Volume ~ x4StarReviews + Price + PositiveServiceReview",
+              "Volume ~ x4StarReviews + Price + NegativeServiceReview")
+
+colname <- c("PS", "NS", "2S","PS+NS", "PS+2S", "Price", "Price+PS", "Price + NS")
+
+cv <- trainControl(method="repeatedcv",number = 10, repeats = 1,)
+
+compare <- c()
+for (i in a) {
+  for (z in features) {
+    fit <- train(formula(z), training, method = i,  trControl = cv)
+    pred <- predict(fit, testing)
+    metric <- postResample(pred,testing$Volume)
+    compare <- cbind(metric,compare)
+    colnames(compare)[colnames(compare) == "metric"] <- paste(i, "-", colname[which (features == z)])
+  }
+}
+
+
+#Results presentation
+melted <- melt(compare)
+ggplot(melted, aes(X2,value))+
+  geom_col()+
+  facet_grid(X1~.,scales="free")+
+  labs(x = "Model W/ outlier", y = "Values")+
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+
+
+```
+```{r , echo=FALSE, results='hide', fig.keep='all', message=FALSE}
+set.seed(123)
+
+in_training <- createDataPartition(ACTUALPRODUCTS$Volume, p=0.7, list=F)
+training <- ACTUALPRODUCTS[in_training,]
+testing <- ACTUALPRODUCTS[-in_training,]
+
+compare <- c()
+for (i in a) {
+  for (z in features) {
+    fit <- train(formula(z), training, method = i,  trControl = cv)
+    pred <- predict(fit, testing)
+    metric <- postResample(pred,testing$Volume)
+    compare <- cbind(metric,compare)
+    colnames(compare)[colnames(compare) == "metric"] <- paste(i, "-", colname[which (features == z)])
+  }
+}
+
+
+#Results presentation
+melted <- melt(compare)
+ggplot(melted, aes(X2,value))+
+  geom_col()+
+  facet_grid(X1~.,scales="free")+
+  labs(x = "Model w/o outliers", y = "Values")+
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+
+```
+
+## Model Improvement - Feature Engineering
+
+
+The results obtained from the original variables of the dataset can be considered acceptable for predicting the volume of sales for new potential products (with the current dataset). However, the good adjustment may be due to lack of data, and therefore other models with modified variables could explain more logically the predicted volume. 
+
+The success of a product could be explained by the rating of the customers in the reviews, the valorisation of the service (negative and positive), and the total amount of reviews in each product. Three additional variables are calculated:
+
+* Review average: the total amount of stars obtained from 4,3,2 and 1 star reviews divided by the total reviews.
+
+* Number of reviews: the sumatory of the star reviews for each product.
+
+* Service valoration: The positive reviews minus the negative reviews.
+
+The same models as before are adjusted with diferent variables combination for each of them and the results are compared with the models selected previously (only without outliers). Three tuples have been deleted because they have no reviews, and then the average cannot be calculated. Therefore the model cannot be used to calculate the volume of sales for new potential products with no reviews.
+
+The results are presented in the figure. It can be seen that for the new variables created the model that best adjust is a random forest with review average, number of reviews, and service valoration. The RMSE and MAE are 153.19 and 89.15, respectively, with a squared correlation of 0.96. 
+
+The model performs better than the previous one. However, a better model can be adjusted for the dataset with the three removals with no valuations with the original variables. The model is a random forest with x4StarReview and PositiveServiceReview. The RMSE and MAE are 113.42 and 62.38, respectively, with a squared correlation of 0.98. 
+
+
+```{r , echo=FALSE, results='hide', fig.keep='all', message=FALSE}
+
+#Feature Enginiering
+
+#Deleting outliers
+ds1 <- ds1[ds1$Volume < 6000,]
+
+
+#Calculating Avarage review and number of reviews
+  ds1$avarage <- (ds1$x4StarReviews*4+ds1$x3StarReviews*3+ds1$x2StarReviews*2+ds1$x1StarReviews)/(ds1$x4StarReviews+ds1$x3StarReviews+ds1$x2StarReviews+ds1$x1StarReviews)
+  ds1 <- na.omit(ds1) #Deleting products that have not been reviewed.
+  ds1$nreviews <- (ds1$x4StarReviews+ds1$x3StarReviews+ds1$x2StarReviews+ds1$x1StarReviews)
+#Calculating Service (Positive-Negative SR)
+  ds1$service <- ds1$PositiveServiceReview-ds1$NegativeServiceReview
+
+#Model training
+
+  in_training <- createDataPartition(ds1$Volume, p=0.7, list=F)
+  training <- ds1[in_training,]
+  testing <- ds1[-in_training,]
+  
+  features_eng <- c("Volume ~ avarage + service",
+                    "Volume ~ avarage + service + Price",
+                    "Volume ~ avarage + service + nreviews",
+                    "Volume ~ x4StarReviews + PositiveServiceReview",
+                    "Volume ~ avarage + NegativeServiceReview + nreviews",
+                    "Volume ~ avarage + Price + nreviews",
+                    "Volume ~ avarage + service + nreviews + Price",
+                    "Volume ~ nreviews + NegativeServiceReview",
+                    "Volume ~ nreviews + NegativeServiceReview + Price")
+  
+  
+  colname_eng <- c("Av+S", "Av+S+P", "Av+nR+S","4*`PS", "Av+P+nR","Av+NS+nR",
+                   "Av+S+NR+P","nR+NS", "Nr+NS+P")
+
+# MODELING
+  compare <- c()
+  
+  for (i in a) {
+    for (z in features_eng) { 
+      fit <- train(formula(z), training, method = i,  trControl = cv)
+      pred <- predict(fit, testing)
+      metric <- postResample(pred,testing$Volume)
+      compare <- cbind(metric,compare)
+      colnames(compare)[colnames(compare) == "metric"] <- paste(i, "-",                                                     colname_eng[which(features_eng == z)])
+    }
+  }
+  
+  #Results presentation 
+  melted <- melt(compare,)
+  ggplot(melted, aes(X2,value))+
+    geom_col()+
+    facet_grid(X1~.,scales="free")+
+    labs(x = "Model", y = "Values")+
+    theme(axis.text.x=element_text(angle=90, hjust=1))    
+  
+ 
+  
+```
+
+## MODEL SELECTION
+
+First of all, the model is applied for the dataset with the outliers to detect potential outliers in the new product dataset, as an outlier is a product with outstanding potential sales.
+
+
+All the models selected for the rest of the predictions can be used indistinctly because there is no relevant difference in the results. However, the first one is chosen with the original variables, and without removing the products with no review is selected because even though the metrics are worse, it can be applied in all the cases.
+
+
+## ANALYSIS RESULT
+
+The results for the first model without outliers show that there is no possible outlier for the new potential products. Therefore, the volume is calculated with the model defined without outliers.
+
+The results are presented in the table. It can be seen that the products 157, 197 188, and 200 must be included in the portfolio because the estimated profit is over the rest. The products 185 and 122 should also be considered as a new addition to the portfolio; both have similar estimated profit. If only one can be added, the decision should be based on the company's strategy because the difference considering the error is negligible. The rest of the products have a substantially lower estimated profit; therefore, they are discarded.
+
+
+
+```{r , results='hide', echo=FALSE, message=FALSE, fig.keep='all', warning = FALSE}
+ds1 <- read.csv("C:/Respaldo FR/UBIQUM/MODEL 2 TASK3/PRODUCTATTRIBUTESID.csv")
+ds2 <- read_csv("C:/Respaldo FR/UBIQUM/MODEL 2 TASK3/NewProductsAttributesF.csv")
+
+
+
+#Data Prerp
+ds1 <- data.frame(ACTUALPRODUCTS[,-2], row.names = ACTUALPRODUCTS[,2])
+ds1 <- data.frame(ds1[ds1$ProductType != "ExtendedWarranty",])
+ds2 <- data.frame(ds1[ds2$ProductType != "ExtendedWarranty",])
+ds1 <- data.frame(ds1[,-11])
+ds1 <- data.frame(ds1[,-15])
+
+#Model Outliers
+set.seed(123)
+in_training <- createDataPartition(ds1$Volume, p=0.7, list=F)
+training <- ds1[in_training,]
+testing <- ds1[-in_training,]
+
+cv <- trainControl(method="repeatedcv",number = 10, repeats = 1,)
+
+modelw <- train(Volume~ x4StarReviews + PositiveServiceReview + Price, ds1, method="rf", traincontrol=cv)
+
+
+
+#Model W/O OUtliers
+ds1 <- ds1[ds1$Volume < 6000,] #Outlier Elim
+
+in_training <- createDataPartition(ds1$Volume, p=0.7, list=F)#Defining train and test set
+training <- ds1[in_training,]
+testing <- ds1[-in_training,]
+
+cv <- trainControl(method="repeatedcv",number = 10, repeats = 1,)#Cross validation
+
+modelwo <- train(Volume~ x4StarReviews + PositiveServiceReview, ds1, method="rf", traincontrol=cv)#Model without 
+
+pred2 <- predict(modelwo,ds2)
+profit <- pred2*ds2$ProfitMargin*ds2$Price
+profit[order(profit)]
+
+
+```
+
+```{r ,echo=FALSE, message=FALSE}
+profit[order(profit)]
+```
+
+
+```{r , echo=FALSE, results='hide', fig.keep='all', message=FALSE}
+
+
+#Results presentation - PREDCTION
+
+set.seed(123)
+intraining <- createDataPartition(ACTUALPRODUCTS$Volume,
+                                  p = 0.7, list = F)
+trainSet <- ACTUALPRODUCTS[in_training,]
+testSet <- ACTUALPRODUCTS[-in_training,]
+
+model <- train(Volume~ x4StarReviews + PositiveServiceReview,
+                 data=trainSet, method = "rf", trainControl=cv)
+ 
+prediction<- predict(model,newdata=testing)
+
+outcome <- postResample(testing$Volume,prediction)
+outcome
+
+finaloutcome <- predict(model,newdata = NEWPRODUCTS)
+finaloutcome
+
+
+NEWPRODUCTS <- data.frame(NEWPRODUCTS)
+
+NEWPRODUCTS$Volume <- finaloutcome
+
+ggplot(NEWPRODUCTS, aes(x=ProductType, y = Volume, fill = ProductType)) +
+  geom_col()
+
+
+filtered <- NEWPRODUCTS[which(NEWPRODUCTS$ProductType == "PC" | NEWPRODUCTS$ProductType == 
+    "Laptop" | NEWPRODUCTS$ProductType == "Netbook" | NEWPRODUCTS$ProductType == 
+    "Smartphone"), ]
+
+finalresults <- filtered[, which(colnames(filtered) %in% c("ProductType", "ProductNum", 
+    "Volume"))]
+
+finalresults$Volume <- round(finalresults$Volume, 0)
+finalresults$Volume <- as.integer(finalresults$Volume)
+
+
+```
+
+
+
+## CONCLUSIONS AND RECOMMENDATIONS 
+
+Based on analysis mentioned, the prediction of the volume of all products has been obtained; it can be said that Tablet, Smartphone, PC, Netbook and Laptop are highest.
+This results are very similar to the analysis that has been done in Rapid Miner weeks ago.
+
+About the impact services reviews and customer reviews it can be said that Positive Reviews,4 and 3 stars have the highest impact on the models.roduct type and volume are not dependet 
+
+It is recommended to get more significant data for better analysis (in terms of observations and variables).
+
